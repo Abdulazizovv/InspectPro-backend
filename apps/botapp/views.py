@@ -110,7 +110,7 @@ async def telegram_webhook(request: HttpRequest, token: str) -> HttpResponse:
         500 Internal Server Error if processing fails
     """
     # 1) Path token must match actual bot token
-    if not bot.token or not compare_digest(token, bot.token):
+    if not bot or not bot.token or not compare_digest(token, bot.token):
         return HttpResponseForbidden("Invalid token")
 
     # 2) Verify Telegram secret header

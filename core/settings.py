@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 import sys
 import environs
@@ -64,15 +65,30 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Third party
+    "corsheaders",
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
+    "django_filters",
     # Local apps
+    "apps.accounts",
+    "apps.dashboard",
     "apps.botapp",
     "apps.common",
+    "apps.clients",
+    "apps.vehicles",
+    "apps.inspections",
+    "apps.payments",
+    "apps.reminders",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "core.middleware.RequestIdMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -134,6 +150,8 @@ else:
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
+
+AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -249,6 +267,14 @@ CELERY_TIMEZONE = env.str("CELERY_TIMEZONE", default=TIME_ZONE)
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=300)
 
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    "schedule-expiry-reminders-daily": {
+        "task": "apps.reminders.tasks.schedule_expiry_reminders",
+        "schedule": crontab(hour=9, minute=0),
+    },
+}
+
 # Security hardening when not in DEBUG
 if not DEBUG:
     SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", True)
@@ -259,3 +285,76 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# ──────────────────────────────────────────────────────────────
+# CORS
+# ──────────────────────────────────────────────────────────────
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
+)
+CORS_ALLOW_CREDENTIALS = True
+
+# ──────────────────────────────────────────────────────────────
+# Django REST Framework
+# ──────────────────────────────────────────────────────────────
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPagination",
+    "PAGE_SIZE": 20,
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+}
+
+# ──────────────────────────────────────────────────────────────
+# Simple JWT
+# ──────────────────────────────────────────────────────────────
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+}
+
+# ──────────────────────────────────────────────────────────────
+# Swagger / drf-spectacular
+# ──────────────────────────────────────────────────────────────
+SPECTACULAR_SETTINGS = {
+    "TITLE": "InspectPro API",
+    "DESCRIPTION": "Vehicle Technical Inspection Management System",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+}
+
+# ──────────────────────────────────────────────────────────────
+# SMS Settings
+# ──────────────────────────────────────────────────────────────
+SMS_PROVIDER = env.str("SMS_PROVIDER", default="mock")  # "mock" | "infinireach"
+SMS_API_KEY = env.str("SMS_API_KEY", default="")
+SMS_FROM = env.str("SMS_FROM", default="")             # Sender phone in E.164
+SMS_CHANNEL = env.str("SMS_CHANNEL", default="sms")   # "sms" | "whatsapp"

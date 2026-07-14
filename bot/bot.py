@@ -6,8 +6,10 @@ env = Env()
 env.read_env()
 
 BOT_TOKEN = env.str("BOT_TOKEN", default=None)
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is required")
 
-# Create bot instance (Aiogram v3)
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+# bot = None when BOT_TOKEN is not configured (webhook endpoint handles this gracefully)
+bot = (
+    Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    if BOT_TOKEN
+    else None
+)
