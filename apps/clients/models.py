@@ -10,6 +10,14 @@ class Client(BaseModel):
     passport = models.CharField(max_length=50, blank=True, verbose_name="Pasport seriyasi")
     address = models.TextField(blank=True, verbose_name="Manzil")
     notes = models.TextField(blank=True, verbose_name="Izohlar")
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="clients",
+        verbose_name="Filial",
+    )
     is_active = models.BooleanField(default=True, verbose_name="Faol")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

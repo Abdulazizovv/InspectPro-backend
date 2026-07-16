@@ -9,6 +9,9 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.utils import timezone
 
+from apps.common.mixins import BranchScopedQuerysetMixin
+from apps.common.activity import log_activity
+from apps.accounts.models import ActivityLog
 from .filters import SmsReminderFilter
 from .models import SmsReminder, SmsTemplate
 from .serializers import (
@@ -54,7 +57,7 @@ class SmsTemplateViewSet(viewsets.ModelViewSet):
     partial_update=extend_schema(summary="SMS eslatmani qisman yangilash", tags=["Reminders"]),
     destroy=extend_schema(summary="SMS eslatmani o'chirish", tags=["Reminders"]),
 )
-class SmsReminderViewSet(viewsets.ModelViewSet):
+class SmsReminderViewSet(BranchScopedQuerysetMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SmsReminderFilter
@@ -63,9 +66,10 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
     ordering = ["-scheduled_date"]
 
     def get_queryset(self):
-        return SmsReminder.objects.active().select_related(
-            "vehicle", "vehicle__client", "created_by"
+        qs = SmsReminder.objects.active().select_related(
+            "vehicle", "vehicle__client", "created_by", "branch"
         )
+        return self._apply_branch_filter(qs)
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -75,7 +79,25 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
         return SmsReminderDetailSerializer
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        user = self.request.user
+        branch = getattr(user, "branch", None)
+        if user.role == "super_admin":
+            branch_id = self.request.data.get("branch") or self.request.query_params.get("branch")
+            if branch_id:
+                from apps.branches.models import Branch
+                try:
+                    branch = Branch.objects.get(id=branch_id)
+                except Branch.DoesNotExist:
+                    pass
+        instance = serializer.save(branch=branch, created_by=user)
+        if instance.trigger_type == "manual":
+            log_activity(
+                user,
+                ActivityLog.Action.SMS_SENT_MANUAL,
+                instance,
+                self.request,
+                metadata={"phone": instance.phone or "", "message": (instance.message or "")[:100]},
+            )
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -110,12 +132,19 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
         today = timezone.now().date()
         end_date = today + timedelta(days=30)
 
+        user = request.user
+        branch_filter = {} if user.role == "super_admin" else {"branch": user.branch}
+        branch_id = request.query_params.get("branch")
+        if user.role == "super_admin" and branch_id:
+            branch_filter = {"branch_id": branch_id}
+
         # Texnik ko'rik muddati yaqinlashayotgan avtomobillar
         tech_vehicles = Vehicle.objects.filter(
             expiry_date__gte=today,
             expiry_date__lte=end_date,
             deleted_at__isnull=True,
             is_active=True,
+            **branch_filter,
         ).select_related("client").order_by("expiry_date")
 
         # Gaz ballon muddati yaqinlashayotgan avtomobillar (faqat metan/propan)
@@ -125,6 +154,7 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
             engine_type__in=["metan", "propan"],
             deleted_at__isnull=True,
             is_active=True,
+            **branch_filter,
         ).select_related("client").order_by("gas_cylinder_expiry_date")
 
         result = []
@@ -194,6 +224,12 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
         notify_days = [7, 14, 30]
         GAS_ENGINE_TYPES = ("metan", "propan")
 
+        user = request.user
+        branch_filter = {} if user.role == "super_admin" else {"branch": user.branch}
+        branch_id = request.query_params.get("branch")
+        if user.role == "super_admin" and branch_id:
+            branch_filter = {"branch_id": branch_id}
+
         groups = []
 
         for days_ahead in notify_days:
@@ -206,6 +242,7 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
                 expiry_date__lte=date_to,
                 is_active=True,
                 deleted_at__isnull=True,
+                **branch_filter,
             ).select_related("client").order_by("expiry_date")
 
             for v in tech_vehicles:
@@ -239,6 +276,7 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
                 engine_type__in=GAS_ENGINE_TYPES,
                 is_active=True,
                 deleted_at__isnull=True,
+                **branch_filter,
             ).select_related("client").order_by("gas_cylinder_expiry_date")
 
             for v in gas_vehicles:
@@ -268,12 +306,13 @@ class SmsReminderViewSet(viewsets.ModelViewSet):
         groups.sort(key=lambda x: x["sms_date"])
         return Response(groups)
 
-    @extend_schema(summary="SMS eslatmalar oylik statistikasi", tags=["Reminders"])
+    @extend_schema(summary="SMS eslatmalar oylik statistikasi (global)", tags=["Reminders"])
     @action(detail=False, methods=["get"])
     def stats(self, request):
         now = timezone.now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+        # Global limit — barcha filiallar bo'yicha umumiy hisob
         month_sent = SmsReminder.objects.filter(
             status=SmsReminder.Status.SENT,
             sent_at__gte=month_start,

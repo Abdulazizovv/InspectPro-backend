@@ -10,6 +10,7 @@ Pillow==12.1.1
 psycopg2-binary==2.9.11
 redis==7.3.0
 uvicorn==0.41.0
+requests==2.32.3
 # REST API
 djangorestframework==3.16.0
 djangorestframework-simplejwt==5.4.0

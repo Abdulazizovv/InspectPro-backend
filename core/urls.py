@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/telegram/webhook/<str:token>", telegram_webhook, name="telegram_webhook_no_slash"),
     path("api/telegram/webhook/<str:token>/", telegram_webhook, name="telegram_webhook"),
     # API v1
+    path("api/v1/", include("apps.branches.urls")),
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/dashboard/", include("apps.dashboard.urls")),
     path("api/v1/clients/", include("apps.clients.urls")),

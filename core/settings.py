@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "django_filters",
     # Local apps
     "apps.accounts",
+    "apps.branches",
     "apps.dashboard",
     "apps.botapp",
     "apps.common",
@@ -269,9 +270,20 @@ CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=300)
 
 from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
+    # Eski global daily task — hali ham ishlaydi (global fallback)
     "schedule-expiry-reminders-daily": {
         "task": "apps.reminders.tasks.schedule_expiry_reminders",
         "schedule": crontab(hour=9, minute=0),
+    },
+    # Yangi: har soatda 05 daqiqada har filialning auto_sms vaqtini tekshiradi
+    "check-auto-sms-hourly": {
+        "task": "apps.reminders.tasks.check_and_send_auto_sms",
+        "schedule": crontab(minute=5),
+    },
+    # Har kuni yarim tunda DB backup oladi va Telegram ga yuboradi
+    "daily-db-backup": {
+        "task": "apps.common.tasks.backup_db_and_send_to_telegram",
+        "schedule": crontab(hour=0, minute=0),
     },
 }
 

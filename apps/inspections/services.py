@@ -6,10 +6,11 @@ from .models import Inspection
 class InspectionService:
     @staticmethod
     @transaction.atomic
-    def create(validated_data: dict, created_by) -> Inspection:
+    def create(validated_data: dict, created_by, branch=None) -> Inspection:
         inspection = Inspection.objects.create(
             **validated_data,
             created_by=created_by,
+            branch=branch,
         )
         if inspection.status == Inspection.Status.PASSED:
             InspectionService._sync_vehicle(inspection)

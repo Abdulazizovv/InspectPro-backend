@@ -48,6 +48,14 @@ class Inspection(BaseModel):
         null=True, blank=True,
         verbose_name="Ko'rik narxi (so'm)",
     )
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="inspections",
+        verbose_name="Filial",
+    )
     notes = models.TextField(blank=True, verbose_name="Izohlar")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

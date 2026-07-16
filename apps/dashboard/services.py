@@ -2,22 +2,23 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import Count, Sum, Q
-from django.db.models.functions import TruncMonth
+from django.db.models.functions import TruncMonth, TruncDate
 
 
 class DashboardService:
     @staticmethod
-    def get_stats() -> dict:
+    def get_stats(branch=None) -> dict:
+        bf = {"branch": branch} if branch else {}
         return {
-            "overview": DashboardService._get_overview(),
-            "monthly_inspections": DashboardService._monthly_inspections(),
-            "monthly_revenue": DashboardService._monthly_revenue(),
-            "expiring_soon": DashboardService._expiring_soon(),
+            "overview": DashboardService._get_overview(bf),
+            "monthly_inspections": DashboardService._monthly_inspections(bf),
+            "monthly_revenue": DashboardService._monthly_revenue(bf),
+            "expiring_soon": DashboardService._expiring_soon(bf),
             "recent_activities": [],
         }
 
     @staticmethod
-    def _get_overview() -> dict:
+    def _get_overview(bf: dict) -> dict:
         from django.utils import timezone
         from apps.accounts.models import User
         from apps.clients.models import Client
@@ -31,7 +32,7 @@ class DashboardService:
 
         monthly_revenue = (
             Inspection.objects.active()
-            .filter(inspection_date__gte=first_of_month, amount__isnull=False)
+            .filter(inspection_date__gte=first_of_month, amount__isnull=False, **bf)
             .aggregate(total=Sum("amount"))["total"] or 0
         )
         last_month_revenue = (
@@ -40,42 +41,46 @@ class DashboardService:
                 inspection_date__gte=last_month_start,
                 inspection_date__lte=last_month_end,
                 amount__isnull=False,
+                **bf,
             )
             .aggregate(total=Sum("amount"))["total"] or 0
         )
 
         this_month_inspections = Inspection.objects.active().filter(
-            inspection_date__gte=first_of_month
+            inspection_date__gte=first_of_month, **bf
         ).count()
         last_month_inspections = Inspection.objects.active().filter(
             inspection_date__gte=last_month_start,
             inspection_date__lte=last_month_end,
+            **bf,
         ).count()
 
+        vbf = bf
+        ubf = bf
         return {
-            "total_clients": Client.objects.active().filter(is_active=True).count(),
-            "total_vehicles": Vehicle.objects.active().filter(is_active=True).count(),
-            "today_inspections": Inspection.objects.active().filter(inspection_date=today).count(),
+            "total_clients": Client.objects.active().filter(is_active=True, **vbf).count(),
+            "total_vehicles": Vehicle.objects.active().filter(is_active=True, **vbf).count(),
+            "today_inspections": Inspection.objects.active().filter(inspection_date=today, **bf).count(),
             "upcoming_expirations": Vehicle.objects.active().filter(
-                expiry_date__gte=today, expiry_date__lte=today + timedelta(days=30)
+                expiry_date__gte=today, expiry_date__lte=today + timedelta(days=30), **vbf
             ).count(),
             "expires_15_days": Vehicle.objects.active().filter(
-                expiry_date__gte=today, expiry_date__lte=today + timedelta(days=15)
+                expiry_date__gte=today, expiry_date__lte=today + timedelta(days=15), **vbf
             ).count(),
             "expired_vehicles": Vehicle.objects.active().filter(
-                expiry_date__lt=today, expiry_date__isnull=False
+                expiry_date__lt=today, expiry_date__isnull=False, **vbf
             ).count(),
             "monthly_revenue": str(monthly_revenue),
-            "total_employees": User.objects.filter(is_active=True).count(),
+            "total_employees": User.objects.filter(is_active=True, **ubf).count(),
             "new_vehicles_this_month": Vehicle.objects.active().filter(
-                created_at__date__gte=first_of_month
+                created_at__date__gte=first_of_month, **vbf
             ).count(),
             "inspections_change": this_month_inspections - last_month_inspections,
             "revenue_change": str(float(monthly_revenue) - float(last_month_revenue)),
         }
 
     @staticmethod
-    def _monthly_inspections() -> list[dict]:
+    def _monthly_inspections(bf: dict) -> list[dict]:
         from apps.inspections.models import Inspection
 
         today = date.today()
@@ -83,7 +88,7 @@ class DashboardService:
 
         db_data = (
             Inspection.objects.active()
-            .filter(inspection_date__gte=twelve_months_ago)
+            .filter(inspection_date__gte=twelve_months_ago, **bf)
             .annotate(month=TruncMonth("inspection_date"))
             .values("month")
             .annotate(count=Count("id"))
@@ -107,7 +112,7 @@ class DashboardService:
         return result
 
     @staticmethod
-    def _expiring_soon() -> list[dict]:
+    def _expiring_soon(bf: dict) -> list[dict]:
         from django.utils import timezone
         from apps.vehicles.models import Vehicle
         from apps.reminders.models import SmsReminder
@@ -115,15 +120,13 @@ class DashboardService:
         today = timezone.localdate()
         cutoff = today + timedelta(days=15)
 
-        # Texnik ko'rik muddati yaqinlashayotganlar
         tech_vehicles = (
             Vehicle.objects.active()
-            .filter(expiry_date__gte=today, expiry_date__lte=cutoff, is_active=True)
+            .filter(expiry_date__gte=today, expiry_date__lte=cutoff, is_active=True, **bf)
             .select_related("client")
             .order_by("expiry_date")
         )
 
-        # Gaz ballon muddati yaqinlashayotganlar
         gas_vehicles = (
             Vehicle.objects.active()
             .filter(
@@ -131,6 +134,7 @@ class DashboardService:
                 gas_cylinder_expiry_date__lte=cutoff,
                 engine_type__in=["metan", "propan"],
                 is_active=True,
+                **bf,
             )
             .select_related("client")
             .order_by("gas_cylinder_expiry_date")
@@ -180,7 +184,7 @@ class DashboardService:
         return result
 
     @staticmethod
-    def _monthly_revenue() -> list[dict]:
+    def _monthly_revenue(bf: dict) -> list[dict]:
         from apps.inspections.models import Inspection
 
         today = date.today()
@@ -188,7 +192,7 @@ class DashboardService:
 
         db_data = (
             Inspection.objects.active()
-            .filter(inspection_date__gte=twelve_months_ago, amount__isnull=False)
+            .filter(inspection_date__gte=twelve_months_ago, amount__isnull=False, **bf)
             .annotate(month=TruncMonth("inspection_date"))
             .values("month")
             .annotate(amount=Sum("amount"))
@@ -214,14 +218,24 @@ class DashboardService:
 
 class ReportsService:
     @staticmethod
-    def get_report(date_from, date_to) -> dict:
+    def get_report(date_from, date_to, branch=None) -> dict:
+        bf = {"branch": branch} if branch else {}
+        today = date.today()
+
+        # Default: oxirgi 30 kun
+        if not date_from:
+            date_from = today - timedelta(days=30)
+        if not date_to:
+            date_to = today
+
         return {
-            "summary": ReportsService._summary(date_from, date_to),
-            "inspections_by_status": ReportsService._inspections_by_status(date_from, date_to),
-            "inspections_by_type": ReportsService._inspections_by_type(date_from, date_to),
-            "revenue_by_month": ReportsService._revenue_by_month(date_from, date_to),
-            "top_inspectors": ReportsService._top_inspectors(date_from, date_to),
-            "expiry_report": ReportsService._expiry_report(),
+            "summary": ReportsService._summary(date_from, date_to, bf),
+            "inspections_by_type": ReportsService._inspections_by_type(date_from, date_to, bf),
+            "daily_inspections": ReportsService._daily_inspections(date_from, date_to, bf),
+            "daily_revenue": ReportsService._daily_revenue(date_from, date_to, bf),
+            "by_inspector": ReportsService._by_inspector(date_from, date_to, bf),
+            "expired_vehicles": ReportsService._expired_vehicles(bf),
+            "expires_30_days_list": ReportsService._expires_30_days_list(bf),
         }
 
     @staticmethod
@@ -233,43 +247,50 @@ class ReportsService:
         return qs
 
     @staticmethod
-    def _summary(date_from, date_to) -> dict:
+    def _passed_qs(date_from, date_to, bf: dict):
+        """Faqat 'passed' statusli ko'riklar"""
         from apps.inspections.models import Inspection
-        qs = ReportsService._date_filter(
-            Inspection.objects.active(), "inspection_date", date_from, date_to
-        )
+        qs = Inspection.objects.active().filter(status=Inspection.Status.PASSED, **bf)
+        return ReportsService._date_filter(qs, "inspection_date", date_from, date_to)
+
+    @staticmethod
+    def _summary(date_from, date_to, bf: dict) -> dict:
+        from apps.vehicles.models import Vehicle
+        today = date.today()
+
+        qs = ReportsService._passed_qs(date_from, date_to, bf)
         total_revenue = qs.filter(amount__isnull=False).aggregate(t=Sum("amount"))["t"] or Decimal(0)
+
+        expired_count = Vehicle.objects.active().filter(
+            expiry_date__lt=today, expiry_date__isnull=False, is_active=True, **bf
+        ).count()
+
+        expires_30 = Vehicle.objects.active().filter(
+            expiry_date__gte=today,
+            expiry_date__lte=today + timedelta(days=30),
+            is_active=True,
+            **bf,
+        ).count()
+
         return {
             "total_inspections": qs.count(),
-            "passed_inspections": qs.filter(status=Inspection.Status.PASSED).count(),
-            "failed_inspections": qs.filter(status=Inspection.Status.FAILED).count(),
-            "scheduled_inspections": qs.filter(status=Inspection.Status.SCHEDULED).count(),
             "total_revenue": float(total_revenue),
-            "technical_count": qs.filter(inspection_type=Inspection.InspectionType.TECHNICAL).count(),
-            "gas_cylinder_count": qs.filter(inspection_type=Inspection.InspectionType.GAS_CYLINDER).count(),
+            "expired_count": expired_count,
+            "expires_30_days": expires_30,
         }
 
     @staticmethod
-    def _inspections_by_status(date_from, date_to) -> list[dict]:
-        from apps.inspections.models import Inspection
-        qs = ReportsService._date_filter(
-            Inspection.objects.active(), "inspection_date", date_from, date_to
+    def _inspections_by_type(date_from, date_to, bf: dict) -> list[dict]:
+        qs = ReportsService._passed_qs(date_from, date_to, bf)
+        rows = (
+            qs.values("inspection_type")
+            .annotate(count=Count("id"), revenue=Sum("amount"))
+            .order_by("inspection_type")
         )
-        rows = qs.values("status").annotate(count=Count("id")).order_by("status")
-        labels = {"scheduled": "Rejalashtirilgan", "passed": "O'tdi", "failed": "O'tmadi"}
-        return [{"status": r["status"], "status_display": labels.get(r["status"], r["status"]), "count": r["count"]} for r in rows]
-
-    @staticmethod
-    def _inspections_by_type(date_from, date_to) -> list[dict]:
-        from apps.inspections.models import Inspection
-        qs = ReportsService._date_filter(
-            Inspection.objects.active(), "inspection_date", date_from, date_to
-        )
-        rows = qs.values("inspection_type").annotate(count=Count("id"), revenue=Sum("amount")).order_by("inspection_type")
         labels = {"technical": "Texnik ko'rik", "gas_cylinder": "Gaz ballon akt"}
         return [
             {
-                "inspection_type": r["inspection_type"],
+                "type": r["inspection_type"],
                 "label": labels.get(r["inspection_type"], r["inspection_type"]),
                 "count": r["count"],
                 "revenue": float(r["revenue"] or 0),
@@ -278,59 +299,94 @@ class ReportsService:
         ]
 
     @staticmethod
-    def _revenue_by_month(date_from, date_to) -> list[dict]:
-        from apps.inspections.models import Inspection
-        qs = ReportsService._date_filter(
-            Inspection.objects.active().filter(amount__isnull=False),
-            "inspection_date", date_from, date_to
-        )
+    def _daily_inspections(date_from, date_to, bf: dict) -> list[dict]:
+        qs = ReportsService._passed_qs(date_from, date_to, bf)
         rows = (
-            qs.annotate(month=TruncMonth("inspection_date"))
-            .values("month")
-            .annotate(amount=Sum("amount"), count=Count("id"))
-            .order_by("month")
+            qs.annotate(day=TruncDate("inspection_date"))
+            .values("day")
+            .annotate(count=Count("id"))
+            .order_by("day")
         )
         return [
-            {
-                "month": row["month"].strftime("%Y-%m"),
-                "month_display": row["month"].strftime("%b %Y"),
-                "amount": float(row["amount"]),
-                "count": row["count"],
-            }
+            {"date": row["day"].strftime("%Y-%m-%d"), "count": row["count"]}
             for row in rows
         ]
 
     @staticmethod
-    def _top_inspectors(date_from, date_to) -> list[dict]:
-        from apps.inspections.models import Inspection
-        qs = ReportsService._date_filter(
-            Inspection.objects.active().filter(inspector__isnull=False),
-            "inspection_date", date_from, date_to,
+    def _daily_revenue(date_from, date_to, bf: dict) -> list[dict]:
+        qs = ReportsService._passed_qs(date_from, date_to, bf).filter(amount__isnull=False)
+        rows = (
+            qs.annotate(day=TruncDate("inspection_date"))
+            .values("day")
+            .annotate(amount=Sum("amount"))
+            .order_by("day")
         )
-        rows = qs.values("inspector__id", "inspector__full_name").annotate(
-            total=Count("id"),
-            passed=Count("id", filter=Q(status="passed")),
-            failed=Count("id", filter=Q(status="failed")),
-            revenue=Sum("amount"),
-        ).order_by("-total")[:10]
+        return [
+            {"date": row["day"].strftime("%Y-%m-%d"), "amount": float(row["amount"] or 0)}
+            for row in rows
+        ]
+
+    @staticmethod
+    def _by_inspector(date_from, date_to, bf: dict) -> list[dict]:
+        qs = ReportsService._passed_qs(date_from, date_to, bf).filter(inspector__isnull=False)
+        rows = (
+            qs.values("inspector__id", "inspector__full_name")
+            .annotate(total=Count("id"), revenue=Sum("amount"))
+            .order_by("-total")[:10]
+        )
         return [
             {
                 "inspector_id": str(r["inspector__id"]),
-                "inspector_name": r["inspector__full_name"],
+                "name": r["inspector__full_name"] or "",
                 "total": r["total"],
-                "passed": r["passed"],
-                "failed": r["failed"],
                 "revenue": float(r["revenue"] or 0),
             }
             for r in rows
         ]
 
     @staticmethod
-    def _expiry_report() -> dict:
+    def _expired_vehicles(bf: dict) -> list[dict]:
         from apps.vehicles.models import Vehicle
         today = date.today()
-        return {
-            "expired": Vehicle.objects.active().filter(expiry_date__lt=today, expiry_date__isnull=False, is_active=True).count(),
-            "expires_7_days": Vehicle.objects.active().filter(expiry_date__gte=today, expiry_date__lte=today + timedelta(days=7), is_active=True).count(),
-            "expires_30_days": Vehicle.objects.active().filter(expiry_date__gte=today, expiry_date__lte=today + timedelta(days=30), is_active=True).count(),
-        }
+        vehicles = (
+            Vehicle.objects.active()
+            .filter(expiry_date__lt=today, expiry_date__isnull=False, is_active=True, **bf)
+            .select_related("client")
+            .order_by("expiry_date")[:50]
+        )
+        result = []
+        for v in vehicles:
+            result.append({
+                "plate": v.plate_number,
+                "client": v.client.full_name if v.client else "",
+                "phone": v.client.phone if v.client else "",
+                "expiry_date": v.expiry_date.strftime("%Y-%m-%d"),
+                "days_overdue": (today - v.expiry_date).days,
+            })
+        return result
+
+    @staticmethod
+    def _expires_30_days_list(bf: dict) -> list[dict]:
+        from apps.vehicles.models import Vehicle
+        today = date.today()
+        vehicles = (
+            Vehicle.objects.active()
+            .filter(
+                expiry_date__gte=today,
+                expiry_date__lte=today + timedelta(days=30),
+                is_active=True,
+                **bf,
+            )
+            .select_related("client")
+            .order_by("expiry_date")[:50]
+        )
+        result = []
+        for v in vehicles:
+            result.append({
+                "plate": v.plate_number,
+                "client": v.client.full_name if v.client else "",
+                "phone": v.client.phone if v.client else "",
+                "expiry_date": v.expiry_date.strftime("%Y-%m-%d"),
+                "days_left": (v.expiry_date - today).days,
+            })
+        return result

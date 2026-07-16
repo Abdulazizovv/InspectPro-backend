@@ -24,6 +24,15 @@ class SmsTemplate(BaseModel):
         default=InspectionType.ANY,
         verbose_name="Ko'rik turi",
     )
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="sms_templates",
+        verbose_name="Filial",
+        help_text="Null = global shablon (barcha filiallar uchun)",
+    )
     is_active = models.BooleanField(default=True, verbose_name="Faol")
 
     class Meta:
@@ -60,6 +69,8 @@ class SmsReminder(BaseModel):
     vehicle = models.ForeignKey(
         Vehicle,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name="sms_reminders",
         verbose_name="Avtomobil",
     )
@@ -84,6 +95,14 @@ class SmsReminder(BaseModel):
         choices=InspectionType.choices,
         default=InspectionType.TECHNICAL,
         verbose_name="Ko'rik turi",
+    )
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="sms_reminders",
+        verbose_name="Filial",
     )
     error_message = models.TextField(blank=True, verbose_name="Xato xabari")
     infinireach_message_id = models.CharField(

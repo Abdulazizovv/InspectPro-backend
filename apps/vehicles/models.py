@@ -39,6 +39,14 @@ class Vehicle(BaseModel):
         null=True, blank=True,
         verbose_name="Gaz ballon akt muddati",
     )
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="vehicles",
+        verbose_name="Filial",
+    )
     is_active = models.BooleanField(default=True, verbose_name="Faol")
     notes = models.TextField(blank=True, verbose_name="Izohlar")
     created_by = models.ForeignKey(
@@ -57,9 +65,9 @@ class Vehicle(BaseModel):
         ordering = ["-created_at"]
         constraints = [
             models.UniqueConstraint(
-                fields=["plate_number"],
+                fields=["branch", "plate_number"],
                 condition=models.Q(deleted_at__isnull=True),
-                name="unique_active_vehicle_plate",
+                name="unique_active_vehicle_plate_per_branch",
             )
         ]
 

@@ -121,12 +121,7 @@ class VehicleWriteSerializer(serializers.ModelSerializer):
         ]
 
     def validate_plate_number(self, value: str) -> str:
-        qs = Vehicle.objects.filter(deleted_at__isnull=True, plate_number=value.upper())
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError("Bu davlat raqami allaqachon ro'yxatdan o'tgan.")
-        return value.upper()
+        return value.upper().strip()
 
     def validate_year(self, value: int) -> int:
         from django.utils import timezone
