@@ -45,6 +45,21 @@ class SmsTemplate(BaseModel):
         return self.name
 
     def render(self, **kwargs) -> str:
+        # Normalize all values to str before formatting
+        for k, v in list(kwargs.items()):
+            kwargs[k] = str(v) if v is not None else ""
+        # Support aliases so templates work regardless of key name used
+        cn = kwargs.get("client_name", "")
+        kwargs.setdefault("name", cn)
+        kwargs.setdefault("full_name", cn)
+        pn = kwargs.get("plate_number", "")
+        kwargs.setdefault("plate", pn)
+        kwargs.setdefault("car_number", pn)
+        dl = kwargs.get("days_left", "")
+        kwargs.setdefault("days", dl)
+        ed = kwargs.get("expiry_date", "")
+        kwargs.setdefault("date", ed)
+        kwargs.setdefault("next_inspection_date", ed)
         try:
             return self.body.format(**kwargs)
         except KeyError:
