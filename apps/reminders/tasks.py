@@ -39,87 +39,109 @@ def send_sms_reminder(self, reminder_id: str):
         raise self.retry(exc=exc)
 
 
-@shared_task
-def schedule_expiry_reminders():
-    """
-    Runs daily at 09:00. Creates pending reminders for vehicles whose
-    ko'rik muddati (expiry_date) or gas_cylinder_expiry_date is 30, 14, or 7 days away.
-    Skips vehicles that already have a pending/sent reminder for that vehicle+inspection_type+date.
-    """
-    from .models import SmsReminder, SmsTemplate
-    from apps.vehicles.models import Vehicle
+GAS_ENGINE_TYPES = ("metan", "propan")
+NOTIFY_DAYS = [30, 14, 7]
 
-    today = date.today()
-    notify_days = [30, 14, 7]
-    created_count = 0
 
-    GAS_ENGINE_TYPES = ("metan", "propan")
+def _get_expiry_template(days_ahead, inspection_type_value):
+    """Ko'rik turiga mos shablon topish: exact match yoki any"""
+    from .models import SmsTemplate
 
-    def _get_template(days_ahead, inspection_type_value):
-        """Ko'rik turiga mos shablon topish: exact match yoki any"""
+    template = SmsTemplate.objects.filter(
+        days_before=days_ahead,
+        inspection_type=inspection_type_value,
+        is_active=True,
+        deleted_at__isnull=True,
+    ).first()
+    if not template:
         template = SmsTemplate.objects.filter(
             days_before=days_ahead,
-            inspection_type=inspection_type_value,
+            inspection_type="any",
             is_active=True,
             deleted_at__isnull=True,
         ).first()
-        if not template:
-            template = SmsTemplate.objects.filter(
-                days_before=days_ahead,
-                inspection_type="any",
-                is_active=True,
-                deleted_at__isnull=True,
-            ).first()
-        return template
+    return template
 
-    def _create_reminder(vehicle, phone, days_ahead, target_date, inspection_type_value, default_msg):
-        already_scheduled = SmsReminder.objects.filter(
-            vehicle=vehicle,
-            inspection_type=inspection_type_value,
-            scheduled_date=today,
-            status__in=[SmsReminder.Status.PENDING, SmsReminder.Status.SENT],
-            trigger_type=SmsReminder.TriggerType.AUTO,
-        ).exists()
 
-        if already_scheduled:
-            return 0
+def _create_expiry_reminder(vehicle, phone, days_ahead, target_date, inspection_type_value, default_msg, today):
+    """
+    Bitta avtomobil uchun SmsReminder yaratadi (agar shu vehicle+inspection_type uchun
+    bugungi kunga allaqachon pending/sent AUTO reminder bo'lmasa). Yaratilgan bo'lsa 1,
+    aks holda 0 qaytaradi.
+    """
+    from .models import SmsReminder
 
-        template = _get_template(days_ahead, inspection_type_value)
+    already_scheduled = SmsReminder.objects.filter(
+        vehicle=vehicle,
+        inspection_type=inspection_type_value,
+        scheduled_date=today,
+        status__in=[SmsReminder.Status.PENDING, SmsReminder.Status.SENT],
+        trigger_type=SmsReminder.TriggerType.AUTO,
+    ).exists()
 
-        if template:
-            message = template.render(
-                client_name=vehicle.client.full_name,
-                plate_number=vehicle.plate_number,
-                brand=vehicle.brand,
-                model=vehicle.model,
-                expiry_date=target_date.strftime("%d.%m.%Y"),
-                days_left=days_ahead,
-            )
-        else:
-            message = default_msg
+    if already_scheduled:
+        return 0
 
-        reminder = SmsReminder.objects.create(
-            vehicle=vehicle,
-            phone=phone,
-            message=message,
-            scheduled_date=today,
-            trigger_type=SmsReminder.TriggerType.AUTO,
-            inspection_type=inspection_type_value,
-            branch=vehicle.branch,
+    template = _get_expiry_template(days_ahead, inspection_type_value)
+
+    if template:
+        message = template.render(
+            client_name=vehicle.client.full_name,
+            plate_number=vehicle.plate_number,
+            brand=vehicle.brand,
+            model=vehicle.model,
+            expiry_date=target_date.strftime("%d.%m.%Y"),
+            days_left=days_ahead,
         )
-        send_sms_reminder.delay(str(reminder.id))
-        return 1
+    else:
+        message = default_msg
 
-    for days_ahead in notify_days:
+    reminder = SmsReminder.objects.create(
+        vehicle=vehicle,
+        phone=phone,
+        message=message,
+        scheduled_date=today,
+        trigger_type=SmsReminder.TriggerType.AUTO,
+        inspection_type=inspection_type_value,
+        branch=vehicle.branch,
+    )
+    send_sms_reminder.delay(str(reminder.id))
+    return 1
+
+
+def _process_expiry_reminders(branch=None):
+    """
+    Texnik ko'rik (expiry_date) va gaz ballon akt (gas_cylinder_expiry_date) muddati
+    30/14/7 kun qolgan avtomobillar uchun SmsReminder yaratadi va yuborishga navbatga qo'yadi.
+
+    `branch` berilsa — faqat shu filialning avtomobillari qamrab olinadi (filial o'z
+    auto_sms_hour vaqtida SMS yuborishi uchun). `branch=None` bo'lsa — barcha filiallar
+    (orqaga moslik / qo'lda umumiy chaqiruv uchun, beat jadvalida endi ishlatilmaydi).
+
+    Dedup: har bir vehicle+inspection_type uchun bugungi kunga (scheduled_date=today)
+    AUTO turidagi pending/sent reminder mavjud bo'lsa, qayta yaratilmaydi. Bitta vehicle'ning
+    expiry_date/gas_cylinder_expiry_date qiymati bitta sana bo'lgani uchun, [30, 14, 7]
+    tsiklidagi faqat bitta iteratsiya shu vehicle'ga mos keladi — shuning uchun bu dedup
+    bir necha marta chaqirilsa ham (masalan bir kunda bir nechta filial tekshiruvi yoki
+    task qayta ishga tushishi) xavfsiz.
+    """
+    from apps.vehicles.models import Vehicle
+
+    today = date.today()
+    created_count = 0
+
+    for days_ahead in NOTIFY_DAYS:
         target_date = today + timedelta(days=days_ahead)
 
         # 1. Texnik ko'rik uchun eslatmalar
-        tech_vehicles = Vehicle.objects.active().filter(
+        tech_qs = Vehicle.objects.active().filter(
             expiry_date=target_date,
             is_active=True,
-        ).select_related("client")
+        )
+        if branch is not None:
+            tech_qs = tech_qs.filter(branch=branch)
 
-        for vehicle in tech_vehicles:
+        for vehicle in tech_qs.select_related("client"):
             phone = vehicle.client.phone
             if not phone:
                 continue
@@ -130,18 +152,20 @@ def schedule_expiry_reminders():
                 f"({target_date.strftime('%d.%m.%Y')}) tugaydi. "
                 f"Iltimos, o'z vaqtida ko'rikdan o'ting."
             )
-            created_count += _create_reminder(
-                vehicle, phone, days_ahead, target_date, "technical", default_msg
+            created_count += _create_expiry_reminder(
+                vehicle, phone, days_ahead, target_date, "technical", default_msg, today
             )
 
         # 2. Gaz ballon akt uchun eslatmalar (faqat metan/propan)
-        gas_vehicles = Vehicle.objects.active().filter(
+        gas_qs = Vehicle.objects.active().filter(
             gas_cylinder_expiry_date=target_date,
             engine_type__in=GAS_ENGINE_TYPES,
             is_active=True,
-        ).select_related("client")
+        )
+        if branch is not None:
+            gas_qs = gas_qs.filter(branch=branch)
 
-        for vehicle in gas_vehicles:
+        for vehicle in gas_qs.select_related("client"):
             phone = vehicle.client.phone
             if not phone:
                 continue
@@ -152,10 +176,23 @@ def schedule_expiry_reminders():
                 f"({target_date.strftime('%d.%m.%Y')}) tugaydi. "
                 f"Iltimos, o'z vaqtida yangilab oling."
             )
-            created_count += _create_reminder(
-                vehicle, phone, days_ahead, target_date, "gas_cylinder", default_msg
+            created_count += _create_expiry_reminder(
+                vehicle, phone, days_ahead, target_date, "gas_cylinder", default_msg, today
             )
 
+    return created_count
+
+
+@shared_task
+def schedule_expiry_reminders():
+    """
+    BARCHA filiallar uchun expiry reminder yaratadi (global, filial soatlarini hisobga
+    olmaydi). Celery beat jadvalidan OLIB TASHLANGAN — endi har filial o'z auto_sms_hour
+    vaqtida SMS olishi uchun `check_and_send_auto_sms` / `send_expiry_reminders_for_branch`
+    ishlatiladi. Bu funksiya faqat qo'lda chaqirish (masalan management command yoki shell)
+    uchun qoldirilgan.
+    """
+    created_count = _process_expiry_reminders(branch=None)
     logger.info("schedule_expiry_reminders: created %d reminders", created_count)
     return created_count
 
@@ -183,10 +220,12 @@ def check_and_send_auto_sms():
 
 @shared_task
 def send_expiry_reminders_for_branch(branch_id: str):
-    """Bitta filial uchun expiry reminder'larni yaratib yuboradi."""
+    """
+    Bitta filial uchun expiry reminder'larni (texnik ko'rik + gaz ballon akt) yaratib
+    yuboradi. `check_and_send_auto_sms` tomonidan filial o'zining auto_sms_hour vaqtida
+    chaqiriladi. Umumiy mantiq `_process_expiry_reminders`da (SmsTemplate.render() orqali).
+    """
     from apps.branches.models import Branch
-    from apps.vehicles.models import Vehicle
-    from apps.reminders.models import SmsReminder, SmsTemplate
 
     try:
         branch = Branch.objects.get(id=branch_id)
@@ -194,57 +233,9 @@ def send_expiry_reminders_for_branch(branch_id: str):
         logger.warning("Branch %s not found for auto SMS", branch_id)
         return
 
-    today = timezone.now().date()
-
-    for days in [7, 14, 30]:
-        target_date = today + timedelta(days=days)
-        vehicles = Vehicle.objects.filter(
-            branch=branch,
-            is_active=True,
-            next_inspection_date=target_date,
-        ).select_related("client")
-
-        for vehicle in vehicles:
-            if not vehicle.client or not vehicle.client.phone:
-                continue
-
-            # Takroriy yuborishni oldini olish
-            already_sent = SmsReminder.objects.filter(
-                vehicle=vehicle,
-                trigger_type=SmsReminder.TriggerType.AUTO,
-                scheduled_date=today,
-                status__in=[SmsReminder.Status.PENDING, SmsReminder.Status.SENT],
-            ).exists()
-            if already_sent:
-                continue
-
-            template = (
-                SmsTemplate.objects.filter(branch=branch, is_active=True, deleted_at__isnull=True).first()
-                or SmsTemplate.objects.filter(branch__isnull=True, is_active=True, deleted_at__isnull=True).first()
-            )
-            if not template:
-                continue
-
-            try:
-                message = template.body.format(
-                    name=vehicle.client.full_name or "",
-                    plate=vehicle.plate_number or "",
-                    days=days,
-                )
-            except (KeyError, ValueError):
-                message = template.body
-
-            reminder = SmsReminder.objects.create(
-                vehicle=vehicle,
-                branch=branch,
-                phone=vehicle.client.phone,
-                message=message,
-                scheduled_date=today,
-                trigger_type=SmsReminder.TriggerType.AUTO,
-                inspection_type=SmsReminder.InspectionType.TECHNICAL,
-                status=SmsReminder.Status.PENDING,
-            )
-            # Mavjud send_sms_reminder taskin ishlatamiz
-            send_sms_reminder.delay(str(reminder.id))
-
-    logger.info("send_expiry_reminders_for_branch: done for branch %s", branch_id)
+    created_count = _process_expiry_reminders(branch=branch)
+    logger.info(
+        "send_expiry_reminders_for_branch: created %d reminders for branch %s",
+        created_count, branch_id,
+    )
+    return created_count

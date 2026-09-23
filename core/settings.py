@@ -270,12 +270,10 @@ CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=300)
 
 from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
-    # Eski global daily task — hali ham ishlaydi (global fallback)
-    "schedule-expiry-reminders-daily": {
-        "task": "apps.reminders.tasks.schedule_expiry_reminders",
-        "schedule": crontab(hour=9, minute=0),
-    },
-    # Yangi: har soatda 05 daqiqada har filialning auto_sms vaqtini tekshiradi
+    # Eski global daily task ("schedule-expiry-reminders-daily") OLIB TASHLANDI —
+    # filial sozlamalarini (auto_sms_hour/auto_sms_enabled) e'tiborsiz qoldirar edi va
+    # check-auto-sms-hourly bilan birga ikkalanib SMS yuborish xavfini tug'dirar edi.
+    # Har soatda 05 daqiqada har filialning auto_sms vaqtini tekshiradi
     "check-auto-sms-hourly": {
         "task": "apps.reminders.tasks.check_and_send_auto_sms",
         "schedule": crontab(minute=5),
