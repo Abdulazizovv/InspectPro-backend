@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.common.validators import validate_same_branch
 from .models import Inspection
 
 
@@ -69,6 +70,14 @@ class InspectionWriteSerializer(serializers.ModelSerializer):
             "vehicle", "inspection_date", "expiry_date",
             "inspection_type", "status", "inspector", "notes", "amount",
         ]
+
+    def validate_vehicle(self, value):
+        validate_same_branch(self.context.get("request"), value, "avtomobil")
+        return value
+
+    def validate_inspector(self, value):
+        validate_same_branch(self.context.get("request"), value, "tekshiruvchi")
+        return value
 
     def validate(self, attrs):
         status = attrs.get("status", self.instance.status if self.instance else Inspection.Status.SCHEDULED)

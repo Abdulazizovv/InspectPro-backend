@@ -1,18 +1,18 @@
 from datetime import date
 
 from rest_framework import serializers as drf_serializers
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema
 
+from apps.accounts.permissions import IsAnyAdmin
 from .models import SiteSettings
 from .serializers import DashboardStatsSerializer
 from .services import DashboardService, ReportsService
 
 
 class DashboardStatsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAnyAdmin]
 
     @extend_schema(
         responses={200: DashboardStatsSerializer},
@@ -39,7 +39,7 @@ class DashboardStatsView(APIView):
 
 
 class ReportsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAnyAdmin]
 
     @extend_schema(
         summary="Hisobot ma'lumotlari",
@@ -89,7 +89,7 @@ class SiteSettingsSerializer(drf_serializers.ModelSerializer):
 
 
 class SiteSettingsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAnyAdmin]
 
     def _get_settings(self, request):
         user = request.user

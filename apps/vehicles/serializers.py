@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.common.validators import validate_same_branch
 from .models import Vehicle
 
 
@@ -119,6 +120,10 @@ class VehicleWriteSerializer(serializers.ModelSerializer):
             "gas_cylinder_expiry_date",
             "is_active", "notes",
         ]
+
+    def validate_client(self, value):
+        validate_same_branch(self.context.get("request"), value, "mijoz")
+        return value
 
     def validate_plate_number(self, value: str) -> str:
         return value.upper().strip()

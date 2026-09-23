@@ -40,6 +40,14 @@ class Payment(BaseModel):
         related_name="payments",
         verbose_name="Ko'rik",
     )
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="payments",
+        verbose_name="Filial",
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Summa")
     payment_date = models.DateField(verbose_name="To'lov sanasi")
     payment_method = models.CharField(

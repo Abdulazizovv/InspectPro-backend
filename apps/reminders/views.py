@@ -2,16 +2,19 @@ from datetime import timedelta
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.common.mixins import BranchScopedQuerysetMixin
 from apps.common.activity import log_activity
 from apps.accounts.models import ActivityLog
+from apps.accounts.permissions import IsAnyAdmin
 from .filters import SmsReminderFilter
 from .models import SmsReminder, SmsTemplate
 from .serializers import (
@@ -40,11 +43,55 @@ class SmsTemplateViewSet(viewsets.ModelViewSet):
     ordering_fields = ["days_before", "name", "created_at"]
     ordering = ["days_before", "name"]
 
+    def get_permissions(self):
+        # Shablonlarni ko'rish har bir autentifikatsiyalangan foydalanuvchiga ochiq
+        # (SMS yuborishda kerak bo'ladi), lekin CRUD faqat adminlarga.
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            return [IsAnyAdmin()]
+        return [IsAuthenticated()]
+
     def get_queryset(self):
-        return SmsTemplate.objects.active()
+        user = self.request.user
+        qs = SmsTemplate.objects.active().select_related("branch")
+        if user.role == "super_admin":
+            branch_id = self.request.query_params.get("branch")
+            if branch_id:
+                return qs.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
+            return qs
+        # branch_admin/operator: faqat global shablonlar + o'z filiali shablonlari
+        return qs.filter(Q(branch=user.branch) | Q(branch__isnull=True))
+
+    def _check_branch_object_permission(self, instance):
+        user = self.request.user
+        if user.role == "super_admin":
+            return
+        if instance.branch_id is None or instance.branch_id != user.branch_id:
+            raise PermissionDenied(
+                "Bu shablonni faqat super admin yoki uning egasi bo'lgan filial admini tahrirlashi mumkin."
+            )
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        branch = getattr(user, "branch", None)
+        if user.role == "super_admin":
+            branch_id = self.request.data.get("branch") or self.request.query_params.get("branch")
+            if branch_id:
+                from apps.branches.models import Branch
+                try:
+                    branch = Branch.objects.get(id=branch_id)
+                except Branch.DoesNotExist:
+                    branch = None
+            else:
+                branch = None
+        serializer.save(branch=branch)
+
+    def perform_update(self, serializer):
+        self._check_branch_object_permission(serializer.instance)
+        serializer.save()
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
+        self._check_branch_object_permission(instance)
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

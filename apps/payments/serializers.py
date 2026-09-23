@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.common.validators import validate_same_branch
 from .models import Payment
 
 
@@ -74,4 +75,16 @@ class PaymentWriteSerializer(serializers.ModelSerializer):
     def validate_amount(self, value):
         if value <= 0:
             raise serializers.ValidationError("Summa 0 dan katta bo'lishi kerak.")
+        return value
+
+    def validate_client(self, value):
+        validate_same_branch(self.context.get("request"), value, "mijoz")
+        return value
+
+    def validate_vehicle(self, value):
+        validate_same_branch(self.context.get("request"), value, "avtomobil")
+        return value
+
+    def validate_inspection(self, value):
+        validate_same_branch(self.context.get("request"), value, "ko'rik")
         return value

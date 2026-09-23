@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
+from apps.common.mixins import BranchScopedQuerysetMixin
 from .filters import PaymentFilter
 from .models import Payment
 from .serializers import PaymentDetailSerializer, PaymentListSerializer, PaymentWriteSerializer
@@ -18,7 +19,7 @@ from .serializers import PaymentDetailSerializer, PaymentListSerializer, Payment
     partial_update=extend_schema(summary="To'lovni qisman yangilash", tags=["Payments"]),
     destroy=extend_schema(summary="To'lovni o'chirish (soft)", tags=["Payments"]),
 )
-class PaymentViewSet(viewsets.ModelViewSet):
+class PaymentViewSet(BranchScopedQuerysetMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = PaymentFilter
@@ -27,9 +28,10 @@ class PaymentViewSet(viewsets.ModelViewSet):
     ordering = ["-payment_date"]
 
     def get_queryset(self):
-        return Payment.objects.active().select_related(
-            "client", "vehicle", "inspection", "created_by"
+        qs = Payment.objects.active().select_related(
+            "client", "vehicle", "inspection", "created_by", "branch"
         )
+        return self._apply_branch_filter(qs)
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -39,7 +41,17 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return PaymentDetailSerializer
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        user = self.request.user
+        branch = getattr(user, "branch", None)
+        if user.role == "super_admin":
+            branch_id = self.request.data.get("branch") or self.request.query_params.get("branch")
+            if branch_id:
+                from apps.branches.models import Branch
+                try:
+                    branch = Branch.objects.get(id=branch_id)
+                except Branch.DoesNotExist:
+                    pass
+        serializer.save(branch=branch, created_by=user)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

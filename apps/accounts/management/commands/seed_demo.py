@@ -83,7 +83,7 @@ class Command(BaseCommand):
             defaults={
                 "email": "admin@inspectpro.uz",
                 "full_name": "Admin InspectPro",
-                "role": User.Role.ADMIN,
+                "role": User.Role.SUPER_ADMIN,
                 "is_staff": True,
                 "is_superuser": True,
             },

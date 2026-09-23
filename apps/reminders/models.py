@@ -11,7 +11,7 @@ class SmsTemplate(BaseModel):
         GAS_CYLINDER = "gas_cylinder", "Gaz ballon akt"
         ANY = "any", "Har ikkisi"
 
-    name = models.CharField(max_length=100, unique=True, verbose_name="Shablon nomi")
+    name = models.CharField(max_length=100, verbose_name="Shablon nomi")
     body = models.TextField(verbose_name="Xabar matni")
     days_before = models.PositiveIntegerField(
         null=True, blank=True,
@@ -40,6 +40,13 @@ class SmsTemplate(BaseModel):
         verbose_name = "SMS Shablon"
         verbose_name_plural = "SMS Shablonlar"
         ordering = ["days_before", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["branch", "name"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_active_smstemplate_branch_name",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.name
@@ -139,4 +146,5 @@ class SmsReminder(BaseModel):
         ordering = ["-scheduled_date", "-created_at"]
 
     def __str__(self) -> str:
-        return f"{self.vehicle.plate_number} → {self.phone} ({self.get_status_display()})"
+        plate = self.vehicle.plate_number if self.vehicle else "—"
+        return f"{plate} → {self.phone} ({self.get_status_display()})"

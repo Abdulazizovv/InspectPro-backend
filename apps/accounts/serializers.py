@@ -86,6 +86,46 @@ class EmployeeWriteSerializer(serializers.ModelSerializer):
     def validate_password(self, value: str) -> str:
         return value
 
+    def validate(self, attrs: dict) -> dict:
+        request = self.context.get("request")
+        actor = getattr(request, "user", None) if request else None
+        instance = self.instance
+
+        if actor is None:
+            return attrs
+
+        # Hech kim o'z rolini o'zi oshira/tushira olmaydi (bu endpoint orqali umuman
+        # o'zgartira olmasligi kerak — rol o'zgarishi faqat boshqa admin tomonidan).
+        if instance is not None and instance.pk == actor.pk and "role" in attrs and attrs["role"] != instance.role:
+            raise serializers.ValidationError(
+                {"role": "O'zingizning rolingizni o'zgartira olmaysiz."}
+            )
+
+        if actor.role == User.Role.BRANCH_ADMIN:
+            current_role = instance.role if instance is not None else User.Role.OPERATOR
+            target_role = attrs.get("role", current_role)
+
+            # branch_admin faqat operator yarata/tahrirlay oladi
+            if target_role != User.Role.OPERATOR:
+                raise serializers.ValidationError(
+                    {"role": "Filial admini faqat 'operator' rolidagi xodim yarata yoki tahrirlay oladi."}
+                )
+            if instance is not None and instance.role != User.Role.OPERATOR:
+                raise serializers.ValidationError(
+                    {"role": "Bu xodimni tahrirlash huquqingiz yo'q."}
+                )
+
+            # branch_admin xodim yaratganda/tahrirlaganda filial har doim o'zinikiga majburlanadi
+            attrs["branch"] = actor.branch
+        elif actor.role != User.Role.SUPER_ADMIN:
+            # operator umuman xodimlarni CRUD qila olmaydi (view permission bilan ham bloklangan),
+            # lekin serializer darajasida ham himoya qo'yamiz.
+            raise serializers.ValidationError(
+                {"detail": "Xodimlarni boshqarish huquqingiz yo'q."}
+            )
+
+        return attrs
+
     def create(self, validated_data: dict) -> User:
         password = validated_data.pop("password", None)
         if not password:

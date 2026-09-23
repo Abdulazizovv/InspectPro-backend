@@ -1,14 +1,20 @@
 from rest_framework import serializers
 
+from apps.common.validators import validate_same_branch
 from apps.vehicles.models import Vehicle
 from .models import SmsReminder, SmsTemplate
 
 
 class SmsTemplateSerializer(serializers.ModelSerializer):
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+
     class Meta:
         model = SmsTemplate
-        fields = ["id", "name", "body", "days_before", "inspection_type", "is_active", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = [
+            "id", "name", "body", "days_before", "inspection_type",
+            "branch", "branch_name", "is_active", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "branch", "branch_name", "created_at", "updated_at"]
 
 
 class SmsReminderListSerializer(serializers.ModelSerializer):
@@ -63,3 +69,7 @@ class SmsReminderWriteSerializer(serializers.ModelSerializer):
         if not cleaned:
             raise serializers.ValidationError("Telefon raqami kiritilishi shart.")
         return cleaned
+
+    def validate_vehicle(self, value):
+        validate_same_branch(self.context.get("request"), value, "avtomobil")
+        return value
