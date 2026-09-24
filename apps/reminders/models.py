@@ -5,6 +5,22 @@ from apps.common.models import BaseModel
 from apps.vehicles.models import Vehicle
 
 
+# Canonical placeholders are shown in the UI.  The short names remain for
+# compatibility with templates that users created before the standardisation.
+SMS_TEMPLATE_VARIABLES = frozenset({
+    "client_name", "plate_number", "brand", "model", "expiry_date", "days_left",
+    "name", "full_name", "client", "plate", "car_number", "days", "date",
+    "next_inspection_date",
+})
+
+
+class _TemplateValues(dict):
+    """Keep an unknown placeholder visible instead of discarding the whole SMS."""
+
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
 class SmsTemplate(BaseModel):
     class InspectionType(models.TextChoices):
         TECHNICAL = "technical", "Texnik ko'rik"
@@ -59,6 +75,7 @@ class SmsTemplate(BaseModel):
         cn = kwargs.get("client_name", "")
         kwargs.setdefault("name", cn)
         kwargs.setdefault("full_name", cn)
+        kwargs.setdefault("client", cn)
         pn = kwargs.get("plate_number", "")
         kwargs.setdefault("plate", pn)
         kwargs.setdefault("car_number", pn)
@@ -67,10 +84,7 @@ class SmsTemplate(BaseModel):
         ed = kwargs.get("expiry_date", "")
         kwargs.setdefault("date", ed)
         kwargs.setdefault("next_inspection_date", ed)
-        try:
-            return self.body.format(**kwargs)
-        except KeyError:
-            return self.body
+        return self.body.format_map(_TemplateValues(kwargs))
 
 
 class SmsReminder(BaseModel):

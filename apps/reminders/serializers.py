@@ -1,8 +1,10 @@
+from string import Formatter
+
 from rest_framework import serializers
 
 from apps.common.validators import validate_same_branch
 from apps.vehicles.models import Vehicle
-from .models import SmsReminder, SmsTemplate
+from .models import SMS_TEMPLATE_VARIABLES, SmsReminder, SmsTemplate
 
 
 class SmsTemplateSerializer(serializers.ModelSerializer):
@@ -15,6 +17,21 @@ class SmsTemplateSerializer(serializers.ModelSerializer):
             "branch", "branch_name", "is_active", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "branch", "branch_name", "created_at", "updated_at"]
+
+    def validate_body(self, value: str) -> str:
+        """Reject typos before a template can be saved and used for an SMS."""
+        try:
+            fields = [field for _, field, _, _ in Formatter().parse(value) if field]
+        except ValueError as exc:
+            raise serializers.ValidationError("Shablondagi qavslar noto'g'ri yozilgan.") from exc
+
+        invalid_fields = [field for field in fields if field not in SMS_TEMPLATE_VARIABLES]
+        if invalid_fields:
+            allowed = ", ".join(f"{{{name}}}" for name in sorted(SMS_TEMPLATE_VARIABLES))
+            raise serializers.ValidationError(
+                f"Noma'lum o'zgaruvchi: {', '.join(invalid_fields)}. Ruxsat etilganlari: {allowed}"
+            )
+        return value
 
 
 class SmsReminderListSerializer(serializers.ModelSerializer):

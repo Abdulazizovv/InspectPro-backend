@@ -273,10 +273,10 @@ CELERY_BEAT_SCHEDULE = {
     # Eski global daily task ("schedule-expiry-reminders-daily") OLIB TASHLANDI —
     # filial sozlamalarini (auto_sms_hour/auto_sms_enabled) e'tiborsiz qoldirar edi va
     # check-auto-sms-hourly bilan birga ikkalanib SMS yuborish xavfini tug'dirar edi.
-    # Har soatda 05 daqiqada har filialning auto_sms vaqtini tekshiradi
+    # Har daqiqada filialning tanlangan soat va daqiqasini tekshiradi.
     "check-auto-sms-hourly": {
         "task": "apps.reminders.tasks.check_and_send_auto_sms",
-        "schedule": crontab(minute=5),
+        "schedule": crontab(),
     },
     # Har kuni yarim tunda DB backup oladi va Telegram ga yuboradi
     "daily-db-backup": {

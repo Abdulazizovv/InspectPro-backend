@@ -43,24 +43,37 @@ GAS_ENGINE_TYPES = ("metan", "propan")
 NOTIFY_DAYS = [30, 14, 7]
 
 
-def _get_expiry_template(days_ahead, inspection_type_value):
-    """Ko'rik turiga mos shablon topish: exact match yoki any"""
+def _get_expiry_template(days_ahead, inspection_type_value, branch):
+    """Return the most specific active template available to a branch.
+
+    A branch template must take precedence over a global fallback.  Without
+    this scope, the first matching template from another branch could be used
+    for an automatic SMS.
+    """
     from .models import SmsTemplate
 
-    template = SmsTemplate.objects.filter(
-        days_before=days_ahead,
-        inspection_type=inspection_type_value,
-        is_active=True,
-        deleted_at__isnull=True,
-    ).first()
-    if not template:
+    base_filters = {
+        "days_before": days_ahead,
+        "is_active": True,
+        "deleted_at__isnull": True,
+    }
+    for template_branch in (branch, None):
         template = SmsTemplate.objects.filter(
-            days_before=days_ahead,
-            inspection_type="any",
-            is_active=True,
-            deleted_at__isnull=True,
+            **base_filters,
+            branch=template_branch,
+            inspection_type=inspection_type_value,
         ).first()
-    return template
+        if template:
+            return template
+    for template_branch in (branch, None):
+        template = SmsTemplate.objects.filter(
+            **base_filters,
+            branch=template_branch,
+            inspection_type="any",
+        ).first()
+        if template:
+            return template
+    return None
 
 
 def _create_expiry_reminder(vehicle, phone, days_ahead, target_date, inspection_type_value, default_msg, today):
@@ -82,7 +95,7 @@ def _create_expiry_reminder(vehicle, phone, days_ahead, target_date, inspection_
     if already_scheduled:
         return 0
 
-    template = _get_expiry_template(days_ahead, inspection_type_value)
+    template = _get_expiry_template(days_ahead, inspection_type_value, vehicle.branch)
 
     if template:
         message = template.render(
@@ -199,7 +212,7 @@ def schedule_expiry_reminders():
 
 @shared_task
 def check_and_send_auto_sms():
-    """Har soatda 05 daqiqada ishlaydi. Har filialning auto_sms vaqtini tekshirib, o'z vaqtida reminder'larni yuboradi."""
+    """Run every minute and dispatch each branch at its configured local time."""
     from apps.dashboard.models import SiteSettings
     from apps.branches.models import Branch
 
@@ -210,8 +223,10 @@ def check_and_send_auto_sms():
             settings_obj = SiteSettings.get_for_branch(branch)
             if not settings_obj.auto_sms_enabled:
                 continue
-            # Soat mos keladi va hozir shu soatning birinchi 10 daqiqasidamiz
-            if settings_obj.auto_sms_hour == now.hour and now.minute < 10:
+            if (
+                settings_obj.auto_sms_hour == now.hour
+                and settings_obj.auto_sms_minute == now.minute
+            ):
                 send_expiry_reminders_for_branch.delay(str(branch.id))
                 logger.info("Triggered auto SMS for branch %s at %02d:%02d", branch.id, now.hour, now.minute)
         except Exception as e:

@@ -76,6 +76,8 @@ class ReportsView(APIView):
 
 class SiteSettingsSerializer(drf_serializers.ModelSerializer):
     branch = drf_serializers.PrimaryKeyRelatedField(read_only=True)
+    auto_sms_hour = drf_serializers.IntegerField(min_value=0, max_value=23)
+    auto_sms_minute = drf_serializers.IntegerField(min_value=0, max_value=59)
 
     class Meta:
         model = SiteSettings
